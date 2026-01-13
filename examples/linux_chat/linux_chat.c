@@ -13,60 +13,14 @@
 #include <unistd.h>
 
 #define DEFAULT_PORT "9000"
-#define DEFAULT_PEER "127.0.0.1:9001"
-
 static void usage(const char* prog)
 {
-    fprintf(stderr, "Usage: %s [--port <port>] [--peer <host:port>]\n", prog);
-}
-
-static int parse_peer(const char* spec, struct sockaddr_storage* out_addr, socklen_t* out_len)
-{
-    char host[256];
-    char port[32];
-    const char* colon = strrchr(spec, ':');
-    struct addrinfo hints;
-    struct addrinfo* res = NULL;
-    int rc = 0;
-
-    if (!colon || colon == spec || *(colon + 1) == '\0') {
-        return -1;
-    }
-
-    memset(host, 0, sizeof(host));
-    memset(port, 0, sizeof(port));
-
-    if ((size_t)(colon - spec) >= sizeof(host)) {
-        return -1;
-    }
-
-    memcpy(host, spec, (size_t)(colon - spec));
-    strncpy(port, colon + 1, sizeof(port) - 1);
-
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_DGRAM;
-
-    rc = getaddrinfo(host, port, &hints, &res);
-    if (rc != 0) {
-        return -1;
-    }
-
-    if (res->ai_addrlen > sizeof(*out_addr)) {
-        freeaddrinfo(res);
-        return -1;
-    }
-
-    memcpy(out_addr, res->ai_addr, res->ai_addrlen);
-    *out_len = (socklen_t)res->ai_addrlen;
-    freeaddrinfo(res);
-    return 0;
+    fprintf(stderr, "Usage: %s [--port <port>]\n", prog);
 }
 
 int main(int argc, char** argv)
 {
     const char* port = DEFAULT_PORT;
-    const char* peer_spec = DEFAULT_PEER;
     struct addrinfo hints;
     struct addrinfo* res = NULL;
     struct sockaddr_storage peer_addr;
@@ -79,8 +33,6 @@ int main(int argc, char** argv)
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
             port = argv[++i];
-        } else if (strcmp(argv[i], "--peer") == 0 && i + 1 < argc) {
-            peer_spec = argv[++i];
         } else if (strcmp(argv[i], "--help") == 0) {
             usage(argv[0]);
             return 0;
@@ -88,11 +40,6 @@ int main(int argc, char** argv)
             usage(argv[0]);
             return 1;
         }
-    }
-
-    if (parse_peer(peer_spec, &peer_addr, &peer_len) != 0) {
-        fprintf(stderr, "Invalid peer specification: %s\n", peer_spec);
-        return 1;
     }
 
     memset(&hints, 0, sizeof(hints));
@@ -121,7 +68,7 @@ int main(int argc, char** argv)
     }
     freeaddrinfo(res);
 
-    fprintf(stderr, "Listening on UDP port %s, peer %s\n", port, peer_spec);
+    fprintf(stderr, "Listening on UDP port %s (peer set on first RX)\n", port);
 
     while (1) {
         fd_set rfds;
@@ -149,8 +96,13 @@ int main(int argc, char** argv)
 
         if (FD_ISSET(sockfd, &rfds)) {
             uint8_t buf[512];
-            ssize_t got = recvfrom(sockfd, buf, sizeof(buf), 0, NULL, NULL);
+            struct sockaddr_storage from;
+            socklen_t from_len = sizeof(from);
+            ssize_t got = recvfrom(sockfd, buf, sizeof(buf), 0,
+                                   (struct sockaddr*)&from, &from_len);
             if (got > 0) {
+                peer_addr = from;
+                peer_len = from_len;
                 for (ssize_t i = 0; i < got; ++i) {
                     uint8_t ch = buf[i];
                     if (ch == 0x9B) {
@@ -181,7 +133,7 @@ int main(int argc, char** argv)
                 }
             }
 
-            if (out_len > 0) {
+            if (out_len > 0 && peer_len > 0) {
                 ssize_t sent = sendto(sockfd, out, out_len, 0,
                                       (const struct sockaddr*)&peer_addr, peer_len);
                 if (sent >= 0) {
@@ -190,6 +142,8 @@ int main(int argc, char** argv)
                 } else {
                     perror("sendto");
                 }
+            } else if (out_len > 0) {
+                fprintf(stderr, "No peer yet; drop TX until first RX.\n");
             }
         }
     }

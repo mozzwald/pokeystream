@@ -7,6 +7,7 @@
         .export _ps_vserin
         .export _ps_vseror
         .export _ps_vseroc
+        .export _ps_swap_irq_vector
 
         .import _ps_rx_buf
         .import _ps_rx_widx
@@ -19,8 +20,6 @@
         .import _ps_rx_count
         .import _ps_tx_count
         .import _ps_rx_overflow
-        .import _ps_last_skstat
-        .import _ps_saved_vimirq
         .import _ps_isr_byte
 
 .segment "CODE"
@@ -29,7 +28,8 @@
 _ps_irq_handler:
         bit IRQST
         bpl ps_break_irq
-        jmp (_ps_saved_vimirq)
+        jmp _ps_irq_handler
+_ps_irq_chain = * - 2
 
 ps_break_irq:
         pha
@@ -40,21 +40,10 @@ ps_break_irq:
         pla
         rti
 
-; VSERIN handler: RX byte, clear sticky errors via SKREST (Altirra style).
+; VSERIN handler: RX byte (Altirra convention: A already pushed).
 _ps_vserin:
-        pha
-        txa
-        pha
-        tya
-        pha
-
         lda SERIN
         sta _ps_isr_byte
-        lda SKSTAT
-        sta _ps_last_skstat
-        lda #$00
-        sta SKREST
-
         ; Count all received bytes (even if dropped).
         inc _ps_rx_count
         bne ps_vserin_count_done
@@ -94,18 +83,11 @@ ps_vserin_full:
 
 ps_vserin_exit:
         pla
-        tay
-        pla
-        tax
-        pla
-        rts
+        rti
 
-; VSEROR handler: TX ready.
+; VSEROR handler: TX ready (Altirra convention: A already pushed).
 _ps_vseror:
-        pha
         txa
-        pha
-        tya
         pha
 
         lda _ps_tx_space
@@ -116,10 +98,11 @@ _ps_vseror:
         beq ps_vseror_empty
 
 ps_vseror_has_data:
-        ldy _ps_tx_ridx
-        lda _ps_tx_buf,y
+        ldx _ps_tx_ridx
+        lda _ps_tx_buf,x
         sta SEROUT
-        inc _ps_tx_ridx
+        inx
+        stx _ps_tx_ridx
 
         clc
         lda _ps_tx_space
@@ -139,21 +122,33 @@ ps_vseror_has_data:
         jmp ps_vseror_exit
 
 ps_vseror_empty:
-        ; Clear serial IRQ bits using Altirra's $C7 mask, then keep RX on.
-        lda POKMSK
-        and #PS_IRQ_SERIAL_CLEAR
-        ora #PS_IRQ_RX
-        sta POKMSK
-        sta IRQEN
+        jmp ps_vseror_exit
 
 ps_vseror_exit:
         pla
-        tay
-        pla
         tax
         pla
-        rts
+        rti
 
-; VSEROC handler: unused for one-stop-bit mode.
+; VSEROC handler: output complete; clear the IRQ per Altirra handler.
 _ps_vseroc:
+        lda POKMSK
+        and #$F7
+        sta POKMSK
+        sta IRQEN
+        pla
+        rti
+
+; Swap VIMIRQ vector with our chain address, matching Altirra's SwapIrqVector.
+_ps_swap_irq_vector:
+        ldx #1
+ps_swap_loop:
+        lda VIMIRQ,x
+        pha
+        lda _ps_irq_chain,x
+        sta VIMIRQ,x
+        pla
+        sta _ps_irq_chain,x
+        dex
+        bpl ps_swap_loop
         rts

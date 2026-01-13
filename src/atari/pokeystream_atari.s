@@ -24,7 +24,6 @@
         .import _ps_tx_count
         .import _ps_rx_overflow
         .import _ps_last_skstat
-        .import _ps_saved_vimirq
         .import _ps_saved_vservecs
         .import _ps_saved_pokmsk
         .import _ps_saved_sskctl
@@ -32,6 +31,7 @@
         .import _ps_pokey_init
 
         .import _ps_irq_handler
+        .import _ps_swap_irq_vector
         .import _ps_vserin
         .import _ps_vseror
         .import _ps_vseroc
@@ -54,11 +54,6 @@ ps_init_continue:
         lda SSKCTL
         sta _ps_saved_sskctl
 
-        lda VIMIRQ
-        sta _ps_saved_vimirq
-        lda VIMIRQ+1
-        sta _ps_saved_vimirq+1
-
         lda VSERIN
         sta _ps_saved_vservecs
         lda VSERIN+1
@@ -72,11 +67,6 @@ ps_init_continue:
         lda VSEROC+1
         sta _ps_saved_vservecs+5
 
-        lda #<_ps_irq_handler
-        sta VIMIRQ
-        lda #>_ps_irq_handler
-        sta VIMIRQ+1
-
         lda #<_ps_vserin
         sta VSERIN
         lda #>_ps_vserin
@@ -89,6 +79,8 @@ ps_init_continue:
         sta VSEROC
         lda #>_ps_vseroc
         sta VSEROC+1
+
+        jsr _ps_swap_irq_vector
 
         lda #0
         sta _ps_rx_widx
@@ -132,11 +124,10 @@ ps_init_pokey_loop:
         sta SSKCTL
         sta SKCTL
 
-        ; Enable serial input IRQ per refs/Altirra-850-handler.asm (ORA #$30).
-        ; TX-ready stays off until data queued.
+        ; Enable serial input and output ready IRQs (Altirra behavior).
         lda POKMSK
         and #PS_IRQ_SERIAL_CLEAR
-        ora #PS_IRQ_RX
+        ora #PS_IRQ_SERIAL_MASK
         sta POKMSK
         sta IRQEN
 
@@ -177,14 +168,7 @@ ps_shutdown_continue:
         lda _ps_saved_vservecs+5
         sta VSEROC+1
 
-        lda _ps_saved_vimirq
-        sta VIMIRQ
-        lda _ps_saved_vimirq+1
-        sta VIMIRQ+1
-
-        lda _ps_saved_pokmsk
-        sta POKMSK
-        sta IRQEN
+        jsr _ps_swap_irq_vector
 
         lda _ps_saved_sskctl
         sta SSKCTL
@@ -202,6 +186,7 @@ ps_shutdown_continue:
         jsr pusha
         ldx #0
         lda (c_sp,x)
+        sta tmp1
 
         php
         sei
@@ -211,6 +196,7 @@ ps_shutdown_continue:
         beq ps_send_byte_full
 
         ldy _ps_tx_widx
+        lda tmp1
         sta _ps_tx_buf,y
         inc _ps_tx_widx
 
@@ -221,11 +207,6 @@ ps_shutdown_continue:
         lda _ps_tx_space+1
         sbc #0
         sta _ps_tx_space+1
-
-        lda POKMSK
-        ora #PS_IRQ_TX
-        sta POKMSK
-        sta IRQEN
 
         plp
         lda #0
@@ -258,7 +239,9 @@ ps_send_byte_full:
         bne ps_send_loop_check
         lda tmp1
         ora tmp2
-        beq ps_send_done
+        bne ps_send_check_arg_ok
+        jmp ps_send_done
+ps_send_check_arg_ok:
         lda #$FF
         ldx #$FF
         jmp incsp4
@@ -266,8 +249,9 @@ ps_send_byte_full:
 ps_send_loop_check:
         lda tmp1
         ora tmp2
-        beq ps_send_done
-
+        bne ps_send_loop_continue
+        jmp ps_send_done
+ps_send_loop_continue:
 ps_send_loop:
         lda tmp1
         ora tmp2
@@ -294,11 +278,6 @@ ps_send_loop:
         lda _ps_tx_space+1
         sbc #0
         sta _ps_tx_space+1
-
-        lda POKMSK
-        ora #PS_IRQ_TX
-        sta POKMSK
-        sta IRQEN
 
         plp
 

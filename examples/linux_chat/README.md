@@ -9,9 +9,10 @@ make
 Run:
 
 ```
-./examples/linux_chat/linux_chat --port 9001 --peer 127.0.0.1:9000
+./examples/linux_chat/linux_chat --port 9001
 ```
 
 Notes:
 - Converts Atari EOL (0x9B) to '\n' on receive.
 - Sends '\n' as 0x9B to match Atari behavior.
+- Peer is set automatically on the first received packet.

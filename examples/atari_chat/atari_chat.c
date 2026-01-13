@@ -44,6 +44,10 @@ static void update_counters(void)
     uint32_t tx = 0;
     uint32_t ovf = 0;
     uint8_t sk = 0;
+    volatile uint8_t* irqst_reg = (volatile uint8_t*)0xD20E;
+    volatile uint8_t* pokmsk_reg = (volatile uint8_t*)0x0010;
+    uint8_t irqst = *irqst_reg;
+    uint8_t pokmsk = *pokmsk_reg;
     uint16_t rxq = 0;
     uint16_t txf = 0;
 
@@ -52,8 +56,9 @@ static void update_counters(void)
     txf = ps_tx_free();
 
     gotoxy(0, COUNTER_Y);
-    printf("RX:%lu TX:%lu OVF:%lu SK:%02X   ", (unsigned long)rx, (unsigned long)tx,
-           (unsigned long)ovf, (unsigned int)sk);
+    printf("RX:%lu TX:%lu OVF:%lu SK:%02X IRQ:%02X PK:%02X",
+           (unsigned long)rx, (unsigned long)tx, (unsigned long)ovf,
+           (unsigned int)sk, (unsigned int)irqst, (unsigned int)pokmsk);
 
     gotoxy(0, QUEUE_Y);
     printf("RXQ:%u TXF:%u   ", (unsigned)rxq, (unsigned)txf);
