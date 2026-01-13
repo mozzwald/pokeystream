@@ -5,37 +5,43 @@ HOSTCC  = gcc
 AS      = ca65
 TARGET  = atari
 
-PROGRAM = udp-echo-client
-OUT     = examples/udp-echo/$(PROGRAM).xex
-SERVER  = examples/udp-echo/udp-echo-server
+BUILD_DIR     = build
+ATARI_PROGRAM = atari_chat
+ATARI_OUT     = $(BUILD_DIR)/$(ATARI_PROGRAM).xex
+LINUX_PROGRAM = $(BUILD_DIR)/linux_chat
 
 CFLAGS  = -O -t $(TARGET) --cpu 6502 -Iinclude
-ASFLAGS = --cpu 6502
+ASFLAGS = --cpu 6502 -Isrc/atari
 
-LIB_C   = src/pokeystream.c
-LIB_S   = src/pokeystream_isr.s
-EX_C    = examples/udp-echo/udp-echo-client.c
+LIB_S   = src/atari/pokeystream_atari.s src/atari/pokeystream_isr.s src/atari/pokeystream_buffers.s
+EX_C    = examples/atari_chat/atari_chat.c
 
-OBJ     = src/pokeystream.o src/pokeystream_isr.o examples/udp-echo/udp-echo-client.o
+OBJ     = src/atari/pokeystream_atari.o src/atari/pokeystream_isr.o src/atari/pokeystream_buffers.o examples/atari_chat/atari_chat.o
 
-all: $(OUT) $(SERVER)
+all: $(ATARI_OUT) $(LINUX_PROGRAM)
 
-src/pokeystream.o: $(LIB_C) include/pokeystream.h
-	$(CC) $(CFLAGS) -c -o $@ $<
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
 
-src/pokeystream_isr.o: $(LIB_S)
+src/atari/pokeystream_atari.o: src/atari/pokeystream_atari.s src/atari/pokey_regs.inc
 	$(AS) $(ASFLAGS) -o $@ $<
 
-examples/udp-echo/udp-echo-client.o: $(EX_C) include/pokeystream.h
+src/atari/pokeystream_isr.o: src/atari/pokeystream_isr.s src/atari/pokey_regs.inc
+	$(AS) $(ASFLAGS) -o $@ $<
+
+src/atari/pokeystream_buffers.o: src/atari/pokeystream_buffers.s
+	$(AS) $(ASFLAGS) -o $@ $<
+
+examples/atari_chat/atari_chat.o: $(EX_C) include/pokeystream.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(OUT): $(OBJ)
+$(ATARI_OUT): $(OBJ) | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -o $@ $(OBJ)
 
-$(SERVER): examples/udp-echo/udp-echo-server.c
+$(LINUX_PROGRAM): examples/linux_chat/linux_chat.c | $(BUILD_DIR)
 	$(HOSTCC) -std=c99 -O2 -Wall -Wextra -o $@ $<
 
 clean:
-	rm -f $(OUT) $(SERVER) src/*.o examples/udp-echo/*.o
+	rm -f $(BUILD_DIR)/* src/atari/*.o examples/atari_chat/*.o
 
 .PHONY: all clean
