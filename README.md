@@ -1,5 +1,7 @@
 # POKEYStream
 
+NOTE: This is a work in progress and currently has issues
+
 POKEYStream is a small Atari-only library for raw POKEY serial streaming that
 targets FujiNet UDP Stream / MIDIMaze-style communication. It configures POKEY
 with the MIDI Maze timing and hooks the OS serial vectors for IRQ-driven RX/TX.
