@@ -81,7 +81,8 @@ ps_init_continue:
         lda #>_ps_vseroc
         sta VSEROC+1
 
-        jsr _ps_swap_irq_vector
+        ; disabled to prevent frozen app start
+        ;jsr _ps_swap_irq_vector
 
         lda #0
         sta _ps_rx_widx

@@ -29,9 +29,10 @@
 ; VIMIRQ wrapper: block BREAK per refs/Altirra-850-handler.asm.
 _ps_irq_handler:
         bit IRQST
-        bpl ps_break_irq
-        jmp $ffff
-_ps_irq_chain_addr = * - 2
+        bpl ps_break_irq         ; BREAK asserted (bit7=0) -> handle
+ps_chain:
+        jmp $FFFF                ; patched to old VIMIRQ
+_ps_irq_chain_addr = *-2
 
 ps_break_irq:
         pha
@@ -40,13 +41,24 @@ ps_break_irq:
         lda POKMSK
         sta IRQEN
         pla
-        rti
+        jmp ps_chain
+
+; Swap VIMIRQ vector with our chain address, matching Altirra's SwapIrqVector.
+_ps_swap_irq_vector:
+        ldx #1
+ps_swap_loop:
+        lda VIMIRQ,x
+        pha
+        lda _ps_irq_chain_addr,x
+        sta VIMIRQ,x
+        pla
+        sta _ps_irq_chain_addr,x
+        dex
+        bpl ps_swap_loop
+        rts
 
 ; VSERIN handler: RX byte, SKSTAT capture + SKREST clear (Altirra style).
 _ps_vserin:
-        pha
-        txa
-        pha
         tya
         pha
         lda SERIN
@@ -96,9 +108,7 @@ ps_vserin_exit:
         pla
         tay
         pla
-        tax
-        pla
-        rts
+        rti
 
 ; VSEROR handler: TX ready.
 _ps_vseror:
@@ -116,6 +126,8 @@ _ps_vseror:
         beq ps_vseror_empty
 
 ps_vseror_has_data:
+        lda #$00
+        sta _ps_tx_idle
         ldx _ps_tx_ridx
         lda _ps_tx_buf,x
         sta SEROUT
@@ -154,7 +166,7 @@ ps_vseror_exit:
         pla
         tax
         pla
-        rts
+        rti
 
 ; VSEROC handler: output complete; clear the IRQ per Altirra handler.
 _ps_vseroc:
@@ -164,18 +176,4 @@ _ps_vseroc:
         sta POKMSK
         sta IRQEN
         pla
-        rts
-
-; Swap VIMIRQ vector with our chain address, matching Altirra's SwapIrqVector.
-_ps_swap_irq_vector:
-        ldx #1
-ps_swap_loop:
-        lda VIMIRQ,x
-        pha
-        lda _ps_irq_chain_addr,x
-        sta VIMIRQ,x
-        pla
-        sta _ps_irq_chain_addr,x
-        dex
-        bpl ps_swap_loop
-        rts
+        rti
