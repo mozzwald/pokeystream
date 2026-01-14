@@ -20,7 +20,9 @@
         .import _ps_rx_count
         .import _ps_tx_count
         .import _ps_rx_overflow
+        .import _ps_last_skstat
         .import _ps_isr_byte
+        .import _ps_tx_idle
 
 .segment "CODE"
 
@@ -28,8 +30,8 @@
 _ps_irq_handler:
         bit IRQST
         bpl ps_break_irq
-        jmp _ps_irq_handler
-_ps_irq_chain = * - 2
+        jmp $ffff
+_ps_irq_chain_addr = * - 2
 
 ps_break_irq:
         pha
@@ -40,10 +42,19 @@ ps_break_irq:
         pla
         rti
 
-; VSERIN handler: RX byte (Altirra convention: A already pushed).
+; VSERIN handler: RX byte, SKSTAT capture + SKREST clear (Altirra style).
 _ps_vserin:
+        pha
+        txa
+        pha
+        tya
+        pha
         lda SERIN
         sta _ps_isr_byte
+        lda SKSTAT
+        sta _ps_last_skstat
+        lda #$00
+        sta SKREST
         ; Count all received bytes (even if dropped).
         inc _ps_rx_count
         bne ps_vserin_count_done
@@ -83,11 +94,18 @@ ps_vserin_full:
 
 ps_vserin_exit:
         pla
-        rti
+        tay
+        pla
+        tax
+        pla
+        rts
 
-; VSEROR handler: TX ready (Altirra convention: A already pushed).
+; VSEROR handler: TX ready.
 _ps_vseror:
+        pha
         txa
+        pha
+        tya
         pha
 
         lda _ps_tx_space
@@ -122,22 +140,31 @@ ps_vseror_has_data:
         jmp ps_vseror_exit
 
 ps_vseror_empty:
+        lda #$01
+        sta _ps_tx_idle
+        lda POKMSK
+        and #PS_IRQ_TX_CLEAR
+        sta POKMSK
+        sta IRQEN
         jmp ps_vseror_exit
 
 ps_vseror_exit:
         pla
+        tay
+        pla
         tax
         pla
-        rti
+        rts
 
 ; VSEROC handler: output complete; clear the IRQ per Altirra handler.
 _ps_vseroc:
+        pha
         lda POKMSK
         and #$F7
         sta POKMSK
         sta IRQEN
         pla
-        rti
+        rts
 
 ; Swap VIMIRQ vector with our chain address, matching Altirra's SwapIrqVector.
 _ps_swap_irq_vector:
@@ -145,10 +172,10 @@ _ps_swap_irq_vector:
 ps_swap_loop:
         lda VIMIRQ,x
         pha
-        lda _ps_irq_chain,x
+        lda _ps_irq_chain_addr,x
         sta VIMIRQ,x
         pla
-        sta _ps_irq_chain,x
+        sta _ps_irq_chain_addr,x
         dex
         bpl ps_swap_loop
         rts

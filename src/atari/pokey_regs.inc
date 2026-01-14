@@ -35,3 +35,4 @@ PS_IRQ_SERIAL_MASK  = $30
 PS_IRQ_SERIAL_CLEAR = $C7
 PS_IRQ_RX           = $10
 PS_IRQ_TX           = $20
+PS_IRQ_TX_CLEAR     = $DF

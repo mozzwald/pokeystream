@@ -24,6 +24,7 @@
         .import _ps_tx_count
         .import _ps_rx_overflow
         .import _ps_last_skstat
+        .import _ps_tx_idle
         .import _ps_saved_vservecs
         .import _ps_saved_pokmsk
         .import _ps_saved_sskctl
@@ -101,6 +102,8 @@ ps_init_continue:
         sta _ps_rx_overflow+2
         sta _ps_rx_overflow+3
         sta _ps_last_skstat
+        lda #$01
+        sta _ps_tx_idle
 
         lda #$00
         sta _ps_rx_space
@@ -124,10 +127,10 @@ ps_init_pokey_loop:
         sta SSKCTL
         sta SKCTL
 
-        ; Enable serial input and output ready IRQs (Altirra behavior).
+        ; Enable serial input IRQ; TX-ready enabled on first enqueue.
         lda POKMSK
         and #PS_IRQ_SERIAL_CLEAR
-        ora #PS_IRQ_SERIAL_MASK
+        ora #PS_IRQ_RX
         sta POKMSK
         sta IRQEN
 
@@ -208,6 +211,13 @@ ps_shutdown_continue:
         sbc #0
         sta _ps_tx_space+1
 
+        lda #$00
+        sta _ps_tx_idle
+        lda POKMSK
+        ora #PS_IRQ_TX
+        sta POKMSK
+        sta IRQEN
+
         plp
         lda #0
         ldx #0
@@ -279,8 +289,14 @@ ps_send_loop:
         sbc #0
         sta _ps_tx_space+1
 
-        plp
+        lda #$00
+        sta _ps_tx_idle
+        lda POKMSK
+        ora #PS_IRQ_TX
+        sta POKMSK
+        sta IRQEN
 
+        plp
         inc ptr1
         bne ps_send_ptr_ok
         inc ptr1+1

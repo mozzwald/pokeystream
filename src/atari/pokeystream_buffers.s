@@ -13,6 +13,7 @@
         .export _ps_tx_count
         .export _ps_rx_overflow
         .export _ps_last_skstat
+        .export _ps_tx_idle
         .export _ps_saved_vimirq
         .export _ps_saved_vservecs
         .export _ps_saved_pokmsk
@@ -49,6 +50,9 @@ _ps_rx_overflow:
         .res 4
 
 _ps_last_skstat:
+        .res 1
+
+_ps_tx_idle:
         .res 1
 
 _ps_saved_vimirq:
