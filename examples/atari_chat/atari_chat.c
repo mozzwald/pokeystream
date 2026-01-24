@@ -1,8 +1,12 @@
 #include <conio.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
 
-#include "pokeystream.h"
+#include "pokeyserial.h"
+#include "fujinet-fuji.h"
 
 #define SCREEN_COLS 40
 #define SCREEN_ROWS 24
@@ -16,8 +20,20 @@
 
 #define PROMPT_MAX 78
 
+#define HOST_BUF_LEN 64
+#define NETSTREAM_PORT 9000
+#define NETSTREAM_HOST "localhost"
+#define NETSTREAM_TRANSPORT_UDP 1
+#define HOST_PREFIX_TCP "tcp:"
+#define HOST_PREFIX_UDP "udp:"
+#define HOST_PREFIX_LEN 4
+#define HOSTNAME_MAX_LEN (HOST_BUF_LEN - HOST_PREFIX_LEN - 2)
+
 #define SEI() __asm__("sei")
 #define CLI() __asm__("cli")
+
+static char host_buf[HOST_BUF_LEN];
+static bool use_udp = true;
 
 static char input_buf[PROMPT_MAX + 1];
 static uint8_t input_len;
@@ -28,37 +44,34 @@ static uint8_t rx_y = RX_START_Y;
 static uint8_t input_cursor_x = 2;
 static uint8_t input_cursor_y = PROMPT_Y;
 
-static void read_counters(uint32_t* rx, uint32_t* tx, uint32_t* ovf, uint8_t* sk)
-{
-    SEI();
-    *rx = ps_rx_count;
-    *tx = ps_tx_count;
-    *ovf = ps_rx_overflow;
-    *sk = ps_last_skstat;
-    CLI();
-}
+static uint32_t app_rx_count;
+static uint32_t app_tx_count;
 
 static void update_counters(void)
 {
     uint32_t rx = 0;
     uint32_t tx = 0;
-    uint32_t ovf = 0;
-    uint8_t sk = 0;
+    uint8_t status = 0;
     volatile uint8_t* irqst_reg = (volatile uint8_t*)0xD20E;
     volatile uint8_t* pokmsk_reg = (volatile uint8_t*)0x0010;
     uint8_t irqst = *irqst_reg;
     uint8_t pokmsk = *pokmsk_reg;
-    uint16_t rxq = 0;
-    uint16_t txf = 0;
+    uint8_t rxq = 0;
+    uint8_t txf = 0;
 
-    read_counters(&rx, &tx, &ovf, &sk);
-    rxq = ps_rx_available();
-    txf = ps_tx_free();
+    SEI();
+    rx = app_rx_count;
+    tx = app_tx_count;
+    CLI();
+
+    rxq = ps_serial_rx_available();
+    txf = ps_serial_tx_space();
+    status = ps_serial_get_status();
 
     gotoxy(0, COUNTER_Y);
-    printf("RX:%lu TX:%lu OVF:%lu SK:%02X IRQ:%02X PK:%02X",
-           (unsigned long)rx, (unsigned long)tx, (unsigned long)ovf,
-           (unsigned int)sk, (unsigned int)irqst, (unsigned int)pokmsk);
+    printf("RX:%lu TX:%lu ST:%02X IRQ:%02X PK:%02X",
+           (unsigned long)rx, (unsigned long)tx,
+           (unsigned int)status, (unsigned int)irqst, (unsigned int)pokmsk);
 
     gotoxy(0, QUEUE_Y);
     printf("RXQ:%u TXF:%u   ", (unsigned)rxq, (unsigned)txf);
@@ -143,16 +156,20 @@ static void rx_put(uint8_t ch)
 static void handle_key(uint8_t ch)
 {
     if (ch == 0x12) {
-        ps_shutdown();
-        ps_init();
+        ps_serial_shutdown();
+        ps_serial_init();
         draw_ui();
         return;
     }
 
     if (ch == 0x9B || ch == 0x0D) {
         if (input_len > 0) {
-            if (ps_send((const uint8_t*)input_buf, input_len) >= 0) {
-                ps_send_byte(0x9B);
+            uint8_t sent = ps_serial_write((const uint8_t*)input_buf, input_len);
+            if (sent != 0) {
+                app_tx_count += sent;
+                if (ps_serial_write_byte(0x9B) == 0) {
+                    app_tx_count += 1;
+                }
             }
         }
         input_len = 0;
@@ -177,17 +194,191 @@ static void handle_key(uint8_t ch)
     }
 }
 
+static uint16_t swap16(uint16_t value)
+{
+    return (uint16_t)(((uint32_t)value << 8) | ((uint32_t)value >> 8));
+}
+
+static void strip_newline(char *str)
+{
+    size_t len;
+
+    if (!str) {
+        return;
+    }
+
+    len = strlen(str);
+    if (len == 0) {
+        return;
+    }
+
+    if (str[len - 1] == '\n' || str[len - 1] == '\r') {
+        str[len - 1] = '\0';
+    }
+    len = strlen(str);
+    if (len != 0 && (str[len - 1] == '\n' || str[len - 1] == '\r')) {
+        str[len - 1] = '\0';
+    }
+}
+
+static void trim_spaces(char *str)
+{
+    size_t len;
+    size_t start = 0;
+    size_t i = 0;
+
+    if (!str) {
+        return;
+    }
+
+    len = strlen(str);
+    while (start < len && (str[start] == ' ' || str[start] == '\t')) {
+        ++start;
+    }
+    if (start != 0) {
+        for (i = 0; i + start <= len; ++i) {
+            str[i] = str[i + start];
+        }
+        len = strlen(str);
+    }
+
+    while (len != 0 && (str[len - 1] == ' ' || str[len - 1] == '\t')) {
+        str[len - 1] = '\0';
+        len--;
+    }
+}
+
+static uint16_t parse_port(const char *str, uint16_t fallback)
+{
+    uint16_t value = 0;
+    bool any = false;
+
+    if (!str) {
+        return fallback;
+    }
+
+    while (*str != '\0') {
+        if (*str < '0' || *str > '9') {
+            break;
+        }
+        any = true;
+        value = (uint16_t)(value * 10u + (uint16_t)(*str - '0'));
+        ++str;
+    }
+
+    if (!any || value == 0) {
+        return fallback;
+    }
+
+    return value;
+}
+
+static void build_host_buffer(const char *hostname, bool tcp_transport, uint8_t flags)
+{
+    size_t len;
+    const char *prefix = tcp_transport ? HOST_PREFIX_TCP : HOST_PREFIX_UDP;
+
+    memset(host_buf, 0, sizeof(host_buf));
+    strncpy(host_buf, prefix, HOST_BUF_LEN - 1);
+    strncat(host_buf, hostname, HOSTNAME_MAX_LEN);
+    host_buf[HOST_BUF_LEN - 2] = '\0';
+
+    len = strlen(host_buf);
+    if (len + 1 < HOST_BUF_LEN)
+    {
+        host_buf[len + 1] = (char)flags;
+    }
+}
+
+static void debug_netstream_config(const char *host, uint16_t port,
+                                   bool use_udp, uint8_t flags)
+{
+    clrscr();
+    printf("FujiNet NETStream config\n");
+    printf("Host buffer: %s\n", host_buf);
+    printf("Host: %s\n", host);
+    printf("Port: %u\n", (unsigned)port);
+    printf("Transport: %s\n", use_udp ? "udp" : "tcp");
+    printf("Flags: $%02X (bit0=TCP, bit1=REGISTER)\n", (unsigned)flags);
+    printf("\nPress any key to continue...");
+    cgetc();
+}
+
+static void prompt_netstream_settings(char *host_out, size_t host_len,
+                                      uint16_t *port_out)
+{
+    char input[HOST_BUF_LEN];
+    char transport[16];
+    uint16_t port = NETSTREAM_PORT;
+    use_udp = true;
+
+    printf("Host [%s]: ", NETSTREAM_HOST);
+    if (fgets(input, sizeof(input), stdin) != NULL) {
+        strip_newline(input);
+        trim_spaces(input);
+        if (input[0] != '\0') {
+            strncpy(host_out, input, host_len - 1);
+            host_out[host_len - 1] = '\0';
+        } else {
+            strncpy(host_out, NETSTREAM_HOST, host_len - 1);
+            host_out[host_len - 1] = '\0';
+        }
+    } else {
+        strncpy(host_out, NETSTREAM_HOST, host_len - 1);
+        host_out[host_len - 1] = '\0';
+    }
+
+    printf("Port [%u]: ", (unsigned)NETSTREAM_PORT);
+    if (fgets(input, sizeof(input), stdin) != NULL) {
+        strip_newline(input);
+        trim_spaces(input);
+        port = parse_port(input, NETSTREAM_PORT);
+    }
+
+    printf("Transport (udp/tcp) [udp]: ");
+    if (fgets(transport, sizeof(transport), stdin) != NULL) {
+        strip_newline(transport);
+        trim_spaces(transport);
+        if (transport[0] == 't' || transport[0] == 'T') {
+            use_udp = false;
+        } else if (transport[0] == 'u' || transport[0] == 'U' || transport[0] == '\0') {
+            use_udp = true;
+        }
+    }
+
+    *port_out = port;
+}
+
 int main(void)
 {
-    ps_init();
+    bool ok;
+    uint8_t flags = 0;
+    uint16_t port = NETSTREAM_PORT;
+    char host[HOST_BUF_LEN];
+
+    clrscr();
+    prompt_netstream_settings(host, sizeof(host), &port);
     draw_ui();
+
+    /* Enable FujiNet NETStream */
+    if (!use_udp) {
+        flags |= (1u << 0);
+    }
+    flags |= (1u << 1); /* REGISTER enabled */
+    build_host_buffer(host, !use_udp, flags);
+    //debug_netstream_config(host, port, use_udp, flags);
+    ok = fuji_enable_udpstream(swap16(port), host_buf);
+    (void)ok;
+
+    ps_serial_init();
 
     while (1) {
         uint8_t rx_buf[64];
-        size_t got = ps_recv(rx_buf, sizeof(rx_buf));
-        size_t i = 0;
+        uint8_t got = ps_serial_read(rx_buf, sizeof(rx_buf));
+        uint8_t i = 0;
 
         if (got != 0) {
+            app_rx_count += got;
             for (i = 0; i < got; ++i) {
                 uint8_t ch = rx_buf[i];
                 if (ch == '\n') {
