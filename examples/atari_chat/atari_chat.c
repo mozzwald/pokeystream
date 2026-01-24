@@ -370,6 +370,7 @@ int main(void)
     ok = fuji_enable_udpstream(swap16(port), host_buf);
     (void)ok;
 
+    ps_serial_install_cio();
     ps_serial_init();
 
     while (1) {

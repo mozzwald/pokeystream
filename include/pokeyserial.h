@@ -18,6 +18,9 @@
 void ps_serial_init(void);
 void ps_serial_shutdown(void);
 
+void ps_serial_install_cio(void);
+void ps_serial_remove_cio(void);
+
 uint8_t ps_serial_rx_available(void);
 int ps_serial_read_byte(void);
 uint8_t ps_serial_read(uint8_t* dst, uint8_t maxlen);
