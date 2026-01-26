@@ -19,24 +19,15 @@ FUJINET_INCLUDES = -I$(FUJINET_LIB_DIR)
 CFLAGS  = -O -t $(TARGET) --cpu 6502 -Iinclude $(FUJINET_INCLUDES)
 ASFLAGS = --cpu 6502 -Isrc/atari
 
-LIB_S   = src/atari/pokeystream_atari.s src/atari/pokeystream_isr.s src/atari/pokeystream_buffers.s src/atari/pokeyserial_core.s src/atari/pokeyserial_cio.s
+LIB_S   = src/atari/pokeyserial_core.s src/atari/pokeyserial_cio.s
 EX_C    = examples/atari_chat/atari_chat.c
 
-OBJ     = src/atari/pokeystream_atari.o src/atari/pokeystream_isr.o src/atari/pokeystream_buffers.o src/atari/pokeyserial_core.o src/atari/pokeyserial_cio.o src/atari/pokeyserial.o examples/atari_chat/atari_chat.o
+OBJ     = src/atari/pokeyserial_core.o src/atari/pokeyserial_cio.o src/atari/pokeyserial.o examples/atari_chat/atari_chat.o
 
 all: $(ATARI_OUT) $(LINUX_PROGRAM)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
-
-src/atari/pokeystream_atari.o: src/atari/pokeystream_atari.s src/atari/pokey_regs.inc
-	$(AS) $(ASFLAGS) -o $@ $<
-
-src/atari/pokeystream_isr.o: src/atari/pokeystream_isr.s src/atari/pokey_regs.inc
-	$(AS) $(ASFLAGS) -o $@ $<
-
-src/atari/pokeystream_buffers.o: src/atari/pokeystream_buffers.s
-	$(AS) $(ASFLAGS) -o $@ $<
 
 src/atari/pokeyserial_core.o: src/atari/pokeyserial_core.s src/atari/pokey_regs.inc
 	$(AS) $(ASFLAGS) -o $@ $<

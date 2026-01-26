@@ -215,10 +215,10 @@ ps_tx_send_one:
         lda _ps_serial_tx_buf,x
         sta SEROUT
         inc _ps_serial_tx_rd
-ps_serial_wait_irqen_tx_bit:
-        lda IRQEN
-        and #$08
-        beq ps_serial_wait_irqen_tx_bit
+;ps_serial_wait_irqen_tx_bit:
+;        lda IRQEN
+;        and #$08
+;        beq ps_serial_wait_irqen_tx_bit
 
 ps_serial_tx_exit:
         pla

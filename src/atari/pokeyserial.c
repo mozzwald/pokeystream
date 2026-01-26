@@ -13,6 +13,21 @@ extern volatile uint8_t ps_serial_tx_buf[256];
 void ps_serial_enable_rx_irq(void);
 void ps_serial_kick_tx_irq(void);
 
+static void ps_serial_reassert_clock(void) {
+    volatile uint8_t* audctl = (volatile uint8_t*)0xD208;
+    volatile uint8_t* audf3 = (volatile uint8_t*)0xD204;
+    volatile uint8_t* audf4 = (volatile uint8_t*)0xD206;
+    volatile uint8_t* sskctl = (volatile uint8_t*)0x0232;
+    volatile uint8_t* skctl = (volatile uint8_t*)0xD20F;
+    uint8_t sk = (uint8_t)((*sskctl & 0x07) | 0x10);
+
+    *audf3 = 0x15;
+    *audf4 = 0x00;
+    *audctl = 0x39;
+    *sskctl = sk;
+    *skctl = sk;
+}
+
 static void ps_serial_irq_disable(void) {
     __asm__("sei");
 }
@@ -111,6 +126,7 @@ int ps_serial_write_byte(uint8_t b) {
     ps_serial_tx_wr = (uint8_t)(wr + 1);
     ps_serial_irq_enable();
 
+    ps_serial_reassert_clock();
     ps_serial_kick_tx_irq();
     return 0;
 }
@@ -143,6 +159,7 @@ uint8_t ps_serial_write(const uint8_t* src, uint8_t len) {
     ps_serial_irq_enable();
 
     if (count != 0) {
+        ps_serial_reassert_clock();
         ps_serial_kick_tx_irq();
     }
 

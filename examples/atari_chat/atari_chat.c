@@ -47,6 +47,12 @@ static uint8_t input_cursor_y = PROMPT_Y;
 static uint32_t app_rx_count;
 static uint32_t app_tx_count;
 
+static void disable_os_sound(void)
+{
+    volatile uint8_t* soundr_reg = (volatile uint8_t*)0x0041;
+    *soundr_reg = 0;
+}
+
 static void update_counters(void)
 {
     uint32_t rx = 0;
@@ -54,10 +60,24 @@ static void update_counters(void)
     uint8_t status = 0;
     volatile uint8_t* irqst_reg = (volatile uint8_t*)0xD20E;
     volatile uint8_t* pokmsk_reg = (volatile uint8_t*)0x0010;
+    volatile uint8_t* audctl_reg = (volatile uint8_t*)0xD208;
+    volatile uint8_t* audf3_reg = (volatile uint8_t*)0xD204;
+    volatile uint8_t* audf4_reg = (volatile uint8_t*)0xD206;
+    volatile uint8_t* skctl_reg = (volatile uint8_t*)0xD20F;
+    volatile uint8_t* pactl_reg = (volatile uint8_t*)0xD302;
+    volatile uint8_t* pbctl_reg = (volatile uint8_t*)0xD303;
+    volatile uint8_t* irqen_reg = (volatile uint8_t*)0xD20E;
     uint8_t irqst = *irqst_reg;
     uint8_t pokmsk = *pokmsk_reg;
     uint8_t rxq = 0;
     uint8_t txf = 0;
+    uint8_t audctl = *audctl_reg;
+    uint8_t audf3 = *audf3_reg;
+    uint8_t audf4 = *audf4_reg;
+    uint8_t skctl = *skctl_reg;
+    uint8_t pactl = *pactl_reg;
+    uint8_t pbctl = *pbctl_reg;
+    uint8_t irqen = *irqen_reg;
 
     SEI();
     rx = app_rx_count;
@@ -75,6 +95,13 @@ static void update_counters(void)
 
     gotoxy(0, QUEUE_Y);
     printf("RXQ:%u TXF:%u   ", (unsigned)rxq, (unsigned)txf);
+
+    gotoxy(0, QUEUE_Y + 1);
+    printf("SK:%02X AU:%02X F3:%02X F4:%02X", (unsigned)skctl,
+           (unsigned)audctl, (unsigned)audf3, (unsigned)audf4);
+    gotoxy(0, QUEUE_Y + 2);
+    printf("PA:%02X PB:%02X IE:%02X       ", (unsigned)pactl,
+           (unsigned)pbctl, (unsigned)irqen);
 }
 
 static void render_prompt(void)
@@ -357,6 +384,10 @@ int main(void)
     char host[HOST_BUF_LEN];
 
     clrscr();
+    disable_os_sound();
+    /* Disable keyclick */
+    OS.noclik = 0xFF;
+
     prompt_netstream_settings(host, sizeof(host), &port);
     draw_ui();
 
